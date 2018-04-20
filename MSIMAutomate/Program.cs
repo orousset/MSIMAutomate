@@ -71,15 +71,18 @@ namespace MSIMAutomate
         private static int sizeTX;
         private static string[] inputArray;
         private static bool outputDisplay, inputDisplay;
+        private static int windowHeight, windowWidth;
 
         private static void initDisplay() {
-            outputDisplay = inputDisplay = true;
+            windowHeight = Console.WindowHeight;
+            windowWidth = Console.WindowWidth;
             Console.CursorVisible = false;
             Console.Clear();
             Console.SetCursorPosition(0, 0);
             Console.Write("#### Inputs " + new string('#', (Console.WindowWidth / 2 - 12) ) + "#### Outputs " + new string('#', (Console.WindowWidth / 2 - 13) ) );
         }
         private static void Display(List<string> listOutputSet, int counter) {
+            if ( (windowWidth != Console.WindowWidth) || (windowHeight != Console.WindowHeight) ) { initDisplay(); }
 
             Console.SetCursorPosition(Console.WindowWidth / 2, 1);
             Console.Write(((float)counter / 1000).ToString("0.0"));
@@ -158,12 +161,16 @@ namespace MSIMAutomate
         static void Main(string[] args) {
             NetworkUDP myUDPinterface;
             string IPDst = args[0];
-
+            if (args.Length < 3) {
+                Console.WriteLine("Please provide (1) the address of the multisim engine, the name of the SIO to address and the identification of the ZC file to address");
+                Console.WriteLine("E.g: MSIMAutomate 127.0.0.1 TSW1 ZC2_A");
+                return;
+            }
             FSFB2Node myFSFB2Node = new FSFB2Node();
             FSFB2DataFlow myFSFB2_DataFlow = new FSFB2DataFlow();
-            myFSFB2Node.NameHost = "ZC2_A";
+            myFSFB2Node.NameHost = args[2];
             if (myFSFB2Node.InitListNotes() != ERRORS.NO_ERROR) { string[] listOfNodes = myFSFB2Node.getListNodes(); }
-            if (myFSFB2_DataFlow.InitFSFB2DataFlow("TSW1", myFSFB2Node) == ERRORS.NO_ERROR) {
+            if (myFSFB2_DataFlow.InitFSFB2DataFlow(args[1], myFSFB2Node) == ERRORS.NO_ERROR) {
                 Console.WriteLine("FSFB2 data structure initialised");
             }
             else {
