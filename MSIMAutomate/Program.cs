@@ -28,6 +28,7 @@ namespace MSIMAutomate
 
     class XMLReader
     {
+        public ushort SrcAddr, DstAddr;
         public List<TrkObject> trkObjectList;
         public XMLReader(string xmlFile) {
             trkObjectList = new List<TrkObject>();
@@ -36,6 +37,10 @@ namespace MSIMAutomate
             XmlNodeList xmlnode;
             FileStream fs = new FileStream(xmlFile, FileMode.Open, FileAccess.Read);
             xmldoc.Load(fs);
+            xmlnode = xmldoc.GetElementsByTagName("SRCADDR");
+            SrcAddr = Convert.ToUInt16(xmlnode[0].InnerText); // There must be only 1! SrdAddr - no verification of consistency performed
+            xmlnode = xmldoc.GetElementsByTagName("DSTADDR");
+            DstAddr = Convert.ToUInt16(xmlnode[0].InnerText); // There must be only 1! DstAddr - no verification of consistency performed
             xmlnode = xmldoc.GetElementsByTagName("POINT");
             for (int i  = 0; i < xmlnode.Count; i++) {
                 trkObjectList.Add(new TrkObject());
@@ -63,33 +68,87 @@ namespace MSIMAutomate
         private static int commandDuration = 2; // duration of the command
         private static NetworkUDP UDPinterface;
         private static FSFB2DataFlow myFSFB2_DataFlow;
+        private static int sizeTX;
+        private static string[] inputArray;
+        private static bool outputDisplay, inputDisplay;
 
-        public static void computeStatus(object source, ElapsedEventArgs e) {
+        private static void initDisplay() {
+            outputDisplay = inputDisplay = true;
+            Console.CursorVisible = false;
+            Console.Clear();
+            Console.SetCursorPosition(0, 0);
+            Console.Write("#### Inputs " + new string('#', (Console.WindowWidth / 2 - 12) ) + "#### Outputs " + new string('#', (Console.WindowWidth / 2 - 13) ) );
+        }
+        private static void Display(List<string> listOutputSet, int counter) {
+
+            Console.SetCursorPosition(Console.WindowWidth / 2, 1);
+            Console.Write(((float)counter / 1000).ToString("0.0"));
+            for (int i = 0; i < inputArray.Length; i++) {
+                Console.SetCursorPosition(0, i + 2);
+                Console.Write("{0}: {1} ", inputArray[i], UDPinterface.inputSet[i]);
+            }
+            Console.SetCursorPosition(0, 1);
+            Console.Write(UDPinterface.inputPktCnt.ToString("000"));
+            int j = 2;
+            foreach (TrkObject TrkObj in automataInput.trkObjectList) {
+                foreach (TrkInterface TrkInt in TrkObj.listTrkInterface) {
+                    Console.SetCursorPosition(Console.WindowWidth / 2, j++);
+                    bool isSet = false;
+                    if (listOutputSet.Contains(TrkInt.outputId)) { isSet = true; }
+                    Console.Write("{0} - {1}; ", TrkInt.outputId, isSet);
+                }
+            }
+            if (inputDisplay) {
+                Console.SetCursorPosition(0, Console.WindowHeight - 1);
+                Console.Write("<< {0}", UDPinterface.Convert2String(UDPinterface.receivedBytes));
+            }
+            if (outputDisplay) {
+                Console.SetCursorPosition(0, Console.WindowHeight - 2);
+                Console.Write(">> {0}", UDPinterface.Convert2String(UDPinterface.transmittedBytes));
+            }
+        }
+
+        public static void ComputeStatus(object source, ElapsedEventArgs e) {
             List<string> listOutputSet = new List<string>();
+            sizeTX = myFSFB2_DataFlow.GetLength("TX");
 
             currentTime += cycleTime;
             foreach (TrkObject TrkObj in automataInput.trkObjectList) {
                 int localTime = currentTime / 1000 % TrkObj.period;
                 foreach (TrkInterface TrkInt in TrkObj.listTrkInterface) {
                     if ( (localTime >= TrkInt.timeOperate) && (localTime < TrkInt.timeOperate + commandDuration) ) 
-                        { TrkInt.command = true; /* Console.WriteLine("{0} -- {1}: {2}" , currentTime, TrkInt.outputId, TrkInt.command) */; listOutputSet.Add(TrkInt.outputId); }
+                        { TrkInt.command = true; listOutputSet.Add(TrkInt.outputId); }
                     else if ( ((localTime >= TrkInt.timeOperate + commandDuration) || (localTime < TrkInt.timeOperate) ) && (TrkInt.command == true) )
-                        { TrkInt.command = false; /* Console.WriteLine("{0} -- {1}: {2}", currentTime, TrkInt.outputId, TrkInt.command); */ }
+                        { TrkInt.command = false; }
                 }
             }
-            if (listOutputSet.Count > 0) { UDPinterface.SendMessage(48, myFSFB2_DataFlow.GetIndex(listOutputSet.ToArray(), "TX")); }
-            else { UDPinterface.SendMessage(48, new int[0]); }
+            if (listOutputSet.Count > 0) { UDPinterface.SendMessage(sizeTX, myFSFB2_DataFlow.GetIndex(listOutputSet.ToArray(), "TX")); }
+            else { UDPinterface.SendMessage(sizeTX, new int[0]); }
+            Display(listOutputSet, currentTime);
         }
 
-        public static void InitAutomata(XMLReader input, NetworkUDP UDPinterface_i, FSFB2DataFlow FSFB2_DataFlow_i) {
+        public static void InitAutomata(XMLReader input, NetworkUDP UDPinterface_i, FSFB2DataFlow FSFB2_DataFlow_i, string[] inputArray_i) {
+            inputArray = inputArray_i;
             automataInput = input;
             UDPinterface = UDPinterface_i;
             myFSFB2_DataFlow = FSFB2_DataFlow_i;
+            initDisplay();
             Timer myTimer = new Timer();
-            myTimer.Elapsed += new ElapsedEventHandler(computeStatus);
+            myTimer.Elapsed += new ElapsedEventHandler(ComputeStatus);
             myTimer.Interval = cycleTime;
             myTimer.Start();
-            while (Console.ReadKey(true).Key != ConsoleKey.Q) { /* DO NOTHING */ }
+
+            // Management of key pressed - Q for quitting, O for displaying output to SIO, I for displaying input from SIO, R redraw the whole Console (if resized)
+            bool Qpressed = false;
+            while (!Qpressed){
+                var keyPressed = Console.ReadKey(true).Key;
+                if (keyPressed == ConsoleKey.Q) { Qpressed = true; }
+                else if (keyPressed == ConsoleKey.R) { initDisplay(); }
+                else if ((keyPressed == ConsoleKey.O) && (outputDisplay == false)) { outputDisplay = true; }
+                else if ((keyPressed == ConsoleKey.O) && (outputDisplay == true)) { outputDisplay = false; }
+                else if ((keyPressed == ConsoleKey.I) && (inputDisplay == false)) { inputDisplay = true; }
+                else if ((keyPressed == ConsoleKey.I) && (inputDisplay == true)) { inputDisplay = false; }
+            }
             UDPinterface.Quit();
         }
     }
@@ -97,11 +156,8 @@ namespace MSIMAutomate
     class Program
     {
         static void Main(string[] args) {
-            string[] variableInput, variableOutput;
-            List<string> listVarI, listVarO;
-            int[] indexO, indexI;
             NetworkUDP myUDPinterface;
-            string IPDst = "10.1.2.4";
+            string IPDst = args[0];
 
             FSFB2Node myFSFB2Node = new FSFB2Node();
             FSFB2DataFlow myFSFB2_DataFlow = new FSFB2DataFlow();
@@ -114,27 +170,19 @@ namespace MSIMAutomate
                 Console.WriteLine("Error encountered while attempting to initialised {0} FSFB2 data structure", myFSFB2Node.NameHost);
                 return;
             }
-
             XMLReader myReader = new XMLReader("essai.xml");
 
-            // Initialisation of the list of input/output variables
-            listVarI = new List<string>();
-            listVarO = new List<string>();
-            foreach (TrkObject TrkObj in myReader.trkObjectList) {
-                foreach (TrkInterface TrkInt in TrkObj.listTrkInterface) {
-                    listVarO.Add(TrkInt.outputId);
-                    listVarI.Add(TrkInt.inputId);
+            myUDPinterface = new NetworkUDP();
+            List<string> inputList = new List<string>();
+            foreach (TrkObject trkObj in myReader.trkObjectList) {
+                foreach (TrkInterface trkInt in trkObj.listTrkInterface) {
+                    inputList.Add(trkInt.inputId);
                 }
             }
-            variableOutput = listVarO.ToArray();
-            variableInput = listVarI.ToArray();
-            indexO = myFSFB2_DataFlow.GetIndex(variableOutput, "TX");
-            indexI = myFSFB2_DataFlow.GetIndex(variableInput, "RX");
+            string[] inputArray = inputList.ToArray();
 
-            myUDPinterface = new NetworkUDP();
-            myUDPinterface.InitUDP(IPDst);
-
-            Automata.InitAutomata(myReader, myUDPinterface, myFSFB2_DataFlow);
+            myUDPinterface.InitUDP(IPDst, myFSFB2_DataFlow.GetIndex(inputArray, "RX"), myReader.SrcAddr, myReader.DstAddr);
+            Automata.InitAutomata(myReader, myUDPinterface, myFSFB2_DataFlow, inputArray);
 
         }
     }
