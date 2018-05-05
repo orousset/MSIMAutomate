@@ -27,7 +27,9 @@ namespace MSIMAutomate
         int[] inputIndex;
         public byte[] transmittedBytes, receivedBytes;
         public int[] inputSet;
+        public bool[] inputChanged;
         public byte inputPktCnt;
+        private object lockInputState;
 
         public string Convert2String(byte[] inputArray) {
             StringBuilder sb = new StringBuilder();
@@ -68,7 +70,6 @@ namespace MSIMAutomate
         public void Quit() {
             quit = true;
             socket.Close();
-            //socketR.Close();
         }
 
         public void Listen() {
@@ -77,18 +78,23 @@ namespace MSIMAutomate
                 try {
                     byte[] receiveBytes = socket.Receive(ref RemoteIpEndPoint);
                     if ( ((receiveBytes[3] << 8) + receiveBytes[2] == SrcAddr) && ((receiveBytes[5] << 8) + receiveBytes[4] == DstAddr) && (receiveBytes[1] == Type) ) {
-                        receivedBytes = receiveBytes;
-                        inputPktCnt = receivedBytes[6];
-                        for (int i = 0; i < inputSet.Length; i++) {
-                            inputSet[i] = receivedBytes[10 + inputIndex[i] / 8] & mask[inputIndex[i] % 8];
-                            if (inputSet[i] > 0) { inputSet[i] = 1; }
+                        lock (lockInputState) {
+                            receivedBytes = receiveBytes;
+                            inputPktCnt = receivedBytes[6];
+                            for (int i = 0; i < inputSet.Length; i++) {
+                                int previousValue = inputSet[i];
+                                inputSet[i] = receivedBytes[10 + inputIndex[i] / 8] & mask[inputIndex[i] % 8];
+                                if (inputSet[i] > 0) { inputSet[i] = 1; }
+                                if ((previousValue ^ inputSet[i]) == 1) { inputChanged[i] = true; } else { inputChanged[i] = false; }
+                            }
                         }
                     }
                 } catch(SocketException ex) { if (ex.SocketErrorCode != SocketError.Interrupted) { throw (ex); } } // The socket will throw 'Interrupted' exception when it is closed by other
             }
         }
 
-        public void InitUDP(string IPdst_i, int[] inputIndex_i, ushort SrcAddr_i, ushort DstAddr_i) {
+        public void InitUDP(string IPdst_i, int[] inputIndex_i, ushort SrcAddr_i, ushort DstAddr_i, ref object lockInputState_i) {
+            lockInputState = lockInputState_i;
             SrcAddr = SrcAddr_i;
             DstAddr = DstAddr_i;
             IPdst = IPdst_i;
@@ -96,6 +102,7 @@ namespace MSIMAutomate
             socket = new UdpClient(portSrc);
             socket.Connect(IPdst, portDst);
             inputSet = new int[inputIndex.Length];
+            inputChanged = new bool[inputIndex.Length];
             listenThread = new System.Threading.Thread(new System.Threading.ThreadStart(Listen));
             listenThread.Start();
         }
